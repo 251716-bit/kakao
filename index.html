@@ -32,8 +32,8 @@
         .place-item h5 { color: #333; margin-bottom: 5px; font-size: 15px; }
         .place-item p { font-size: 12px; color: #777; }
 
-        /* 오른쪽 지도 영역 */
-        .map-area { flex: 1; height: 100%; background-color: #e5e5e5; }
+        /* 오른쪽 지도 영역 (로딩 전 백화 현상 인지를 위해 연한 회색 부여) */
+        .map-area { flex: 1; height: 100%; background-color: #f5f5f5; }
     </style>
 </head>
 <body>
@@ -54,46 +54,60 @@
         <div id="map" class="map-area"></div>
     </div>
 
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=fa1a5e0e6d5309f6ae682b37eab50ca7&libraries=services&autoload=false"></script>
-    
     <script>
         let map;
         let placesService;
         let markers = []; // 생성된 마커들을 관리할 배열
 
-        // 1. 브라우저의 HTML창 렌더링이 완전히 끝난 후 카카오맵을 로드하도록 타이밍 제어
+        // [핵심 해결책] 깃허브 주소(https://elena.github.io) 환경에서 카카오 인증 실패를 막는 동적 로드 로직
         window.onload = function() {
-            kakao.maps.load(initializeMap);
+            const script = document.createElement('script');
+            
+            // 1. 보안 프로토콜(https)을 명시하고 자동 로드를 비활성화(&autoload=false)합니다.
+            // 2. 장소 검색에 필요한 &libraries=services 라이브러리를 정확한 순서로 결합합니다.
+            script.src = "https://dapi.kakao.com/v2/maps/sdk.js?appkey=fa1a5e0e6d5309f6ae682b37eab50ca7&libraries=services&autoload=false";
+            
+            // 깃허브 배포 서버의 Referrer Policy 엄격성으로 인한 도메인 불일치 에러를 우회합니다.
+            script.crossOrigin = "anonymous"; 
+            
+            // 스크립트 파일이 브라우저에 완전히 로드된 것이 보장되면 카카오 라이브러리 초기화를 유도합니다.
+            script.onload = function() {
+                if (typeof kakao !== 'undefined' && kakao.maps) {
+                    kakao.maps.load(initializeMap);
+                } else {
+                    alert('카카오 지도 스크립트를 불러오지 못했습니다. 개발자 센터 도메인 설정을 확인해 주세요.');
+                }
+            };
+            
+            document.head.appendChild(script);
         };
 
-        // 2. 지도 초기화 함수
+        // 지도 초기화 함수
         function initializeMap() {
             const mapContainer = document.getElementById('map');
             const mapOption = {
-                center: new kakao.maps.LatLng(37.566826, 126.9786567), // 위치 권한 허용 전 기본 위치 (서울시청)
+                center: new kakao.maps.LatLng(37.566826, 126.9786567), // 위치 권한 허용 전 기본 화면 (서울시청)
                 level: 5 // 지도 확대 레벨 5
             };
 
-            // 지도를 먼저 화면에 띄워 하얗게 굳는 로딩 에러를 방지합니다.
+            // 지도를 생성합니다.
             map = new kakao.maps.Map(mapContainer, mapOption);
             placesService = new kakao.maps.Services.Places();
 
-            // 3. 페이지가 열리면 실시간 위치 권한 요청 후 중심점 변경
+            // 위치 권한을 요청하여 허용 시 현재 위치로 중심점을 이동합니다.
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     function(position) {
-                        const lat = position.coords.latitude;  // 위도
-                        const lon = position.coords.longitude; // 경도
+                        const lat = position.coords.latitude;  
+                        const lon = position.coords.longitude; 
                         const currentPos = new kakao.maps.LatLng(lat, lon);
                         
-                        // 현재 위치로 부드럽게 이동
                         map.setCenter(currentPos);
                     },
                     function(error) {
-                        // 사용자가 거부하더라도 기존에 생성된 기본 지도는 유지되도록 예외 처리
-                        console.log("위치 권한을 획득하지 못해 기본 위치로 유지합니다.", error);
+                        console.log("위치 권한을 획득하지 못해 기본 위치(서울시청)로 유지합니다.", error);
                     },
-                    { timeout: 8000 } // 8초 동안 응답이 없으면 에러로 간주하고 대기 취소
+                    { timeout: 7000 } // 7초 대기 후 응답 없으면 기본 지도로 유지
                 );
             }
         }
@@ -104,6 +118,12 @@
 
             if (!keyword.replace(/^\s+|\s+$/g, '')) {
                 alert('키워드를 입력해주세요!');
+                return;
+            }
+
+            // 지도 서비스가 비동기로 완전히 준비되지 않았을 때의 예외 처리
+            if (!placesService) {
+                alert('지도 서비스가 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요!');
                 return;
             }
 
@@ -127,18 +147,17 @@
             const listEl = document.getElementById('placesList');
             const bounds = new kakao.maps.LatLngBounds(); 
 
-            listEl.innerHTML = ''; // 이전 결과 리스트 초기화
-            removeMarkers(); // 지도 위의 이전 마커들 제거
+            listEl.innerHTML = ''; // 기존 결과 리스트 삭제
+            removeMarkers(); // 지도 위의 기존 마커 삭제
 
             for (let i = 0; i < places.length; i++) {
                 const placePosition = new kakao.maps.LatLng(places[i].y, places[i].x);
                 const marker = addMarker(placePosition); 
                 const itemEl = getListItem(i, places[i]); 
 
-                // 검색된 모든 곳이 화면에 다 들어오도록 bounds 영역 확장
                 bounds.extend(placePosition);
 
-                // 리스트 아이템 클릭 시 해당 위치로 지도 중심 부드럽게 이동
+                // 리스트 아이템 클릭 시 해당 위치로 지도 중심 이동
                 itemEl.onclick = function() {
                     map.panTo(placePosition);
                 };
@@ -146,7 +165,7 @@
                 listEl.appendChild(itemEl);
             }
 
-            // 마커들의 위치에 맞게 지도 범위 자동 조정
+            // 마커들이 한눈에 보이도록 지도 범위 조정
             map.setBounds(bounds);
         }
 
@@ -157,11 +176,11 @@
             });
 
             marker.setMap(map);
-            markers.push(marker); // 추후 삭제를 위해 배열에 저장
+            markers.push(marker); 
             return marker;
         }
 
-        // 기존 마커를 지도에서 완전히 지우는 함수
+        // 기존 마커를 지도에서 모두 제거하는 함수
         function removeMarkers() {
             for (let i = 0; i < markers.length; i++) {
                 markers[i].setMap(null);
