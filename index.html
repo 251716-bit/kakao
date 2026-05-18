@@ -14,7 +14,7 @@
         /* 왼쪽 사이드바 (귀여운 옐로우 테마) */
         .sidebar {
             width: 350px; height: 100%; background: #ffffff;
-            display: flex; flex-direction: column; border-right: 2px border-image: linear-gradient(to bottom, #fee500, #ffb300) 1;
+            display: flex; flex-direction: column; border-right: 2px solid #fee500;
             z-index: 2;
             box-shadow: 3px 0 10px rgba(0,0,0,0.05);
         }
@@ -69,7 +69,7 @@
         .place-item p { font-size: 12px; color: #666; line-height: 1.4; }
 
         /* 오른쪽 지도 영역 */
-        .map-area { flex: 1; height: 100%; }
+        .map-area { flex: 1; height: 100%; background-color: #e5e5e5; }
 
         /* 통통 튀는 맛집 이모지 마커 애니메이션 스타일 */
         .emoji-marker {
@@ -118,33 +118,47 @@
     <script>
         let map;
         let placesService;
-        let customOverlays = []; // 이모지 마커 제어용 전역 배열
-        let activeInfoWindow = null; // 열려있는 정보창 추적용 변수
+        let customOverlays = []; 
+        let activeInfoWindow = null; 
 
-        // API가 정상 로드된 후 내부 코드 컨트롤
-        kakao.maps.load(function() {
+        // 윈도우 창이 완전히 로드된 시점에 로직을 실행하여 깃허브 로딩 지연 문제 방지
+        window.onload = function() {
+            kakao.maps.load(initializeMap);
+        };
+
+        // 지도 및 서비스 초기화 함수
+        function initializeMap() {
             const mapContainer = document.getElementById('map');
             const mapOption = {
-                center: new kakao.maps.LatLng(37.566826, 126.9786567), // 기본 베이스: 서울시청
+                center: new kakao.maps.LatLng(37.566826, 126.9786567), // 기본값: 서울시청
                 level: 5
             };
 
+            // 우선 지도를 무조건 화면에 띄웁니다 (화면이 하얗게 굳는 현상 방지)
             map = new kakao.maps.Map(mapContainer, mapOption);
             placesService = new kakao.maps.Services.Places();
 
-            // Geolocation 브라우저 권한 획득 확인 및 지도 센터 동기화
+            // 지도 객체가 생성된 후, 현재 위치 권한을 안전하게 물어봅니다.
             if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(function(position) {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    const currentPos = new kakao.maps.LatLng(lat, lon);
-                    
-                    map.setCenter(currentPos);
-                });
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        const currentPos = new kakao.maps.LatLng(lat, lon);
+                        
+                        // 사용자가 허용하면 중심점을 내 위치로 이동
+                        map.setCenter(currentPos);
+                    },
+                    function(error) {
+                        // 권한 거부나 환경 에러 시 콘솔에만 기록하고 지도는 유지
+                        console.log("위치 권한을 획득하지 못했으나 기본 지도를 표시합니다.", error);
+                    },
+                    { timeout: 10000 } // 10초 동안 응답 없으면 대기 취소
+                );
             }
-        });
+        }
 
-        // 사용자가 검색 액션을 취할 때 호출되는 트리거 함수
+        // 장소 검색 함수
         function searchPlaces() {
             const keyword = document.getElementById('keyword').value;
 
@@ -153,14 +167,13 @@
                 return;
             }
 
-            // 카카오 장소 검색 API 통신 연동
             placesService.keywordSearch(keyword, placesSearchCallback);
         }
 
-        // 통신 성공/실패 여부를 분기처리하는 콜백 함수
+        // 검색 결과 처리 콜백
         function placesSearchCallback(data, status, pagination) {
             if (status === kakao.maps.Services.Status.OK) {
-                displayPlaces(data); // 데이터 바인딩 시동
+                displayPlaces(data); 
             } else if (status === kakao.maps.Services.Status.ZERO_RESULT) {
                 alert('🥺 삐약.. 검색 결과가 하나도 없대요.');
             } else if (status === kakao.maps.Services.Status.ERROR) {
@@ -168,17 +181,100 @@
             }
         }
 
-        // 지도 화면과 결과 리스트를 매핑하는 핵심 함수
+        // 화면 갱신 및 마커 표시
         function displayPlaces(places) {
             const listEl = document.getElementById('placesList');
             const bounds = new kakao.maps.LatLngBounds(); 
 
-            listEl.innerHTML = ''; // 기존 리스트 삭제
-            clearMap(); // 지도에 렌더링된 마커 및 팝업 일괄 클리어
+            listEl.innerHTML = ''; 
+            clearMap(); 
 
             for (let i = 0; i < places.length; i++) {
                 const placePosition = new kakao.maps.LatLng(places[i].y, places[i].x);
                 
-                // 맛집 컨셉에 맞는 이모지 마커 등록
                 addEmojiMarker(placePosition, places[i]); 
-                const itemEl = getListItem(i
+                const itemEl = getListItem(i, places[i]); 
+
+                bounds.extend(placePosition);
+
+                itemEl.onclick = function() {
+                    map.panTo(placePosition);
+                    openInfoWindow(placePosition, places[i]);
+                };
+
+                listEl.appendChild(itemEl);
+            }
+
+            map.setBounds(bounds);
+        }
+
+        // 이모지 커스텀 오버레이 생성
+        function addEmojiMarker(position, place) {
+            const content = document.createElement('div');
+            content.className = 'emoji-marker';
+            content.innerHTML = '🍔'; 
+
+            content.onclick = function() {
+                openInfoWindow(position, place);
+            };
+
+            const customOverlay = new kakao.maps.CustomOverlay({
+                position: position,
+                content: content,
+                yAnchor: 1 
+            });
+
+            customOverlay.setMap(map);
+            customOverlays.push(customOverlay); 
+        }
+
+        // 인포윈도우 오픈
+        function openInfoWindow(position, place) {
+            if (activeInfoWindow) {
+                activeInfoWindow.close();
+            }
+
+            const addressName = place.road_address_name || place.address_name;
+            const content = `
+                <div class="info-window">
+                    <h4>✨ ${place.place_name}</h4>
+                    <p>📍 ${addressName}</p>
+                </div>
+            `;
+
+            const infoWindow = new kakao.maps.InfoWindow({
+                position: position,
+                content: content,
+                removable: true
+            });
+
+            infoWindow.open(map);
+            activeInfoWindow = infoWindow; 
+        }
+
+        // 지도 클리어
+        function clearMap() {
+            for (let i = 0; i < customOverlays.length; i++) {
+                customOverlays[i].setMap(null);
+            }            
+            customOverlays = [];
+
+            if (activeInfoWindow) {
+                activeInfoWindow.close();
+                activeInfoWindow = null;
+            }
+        }
+
+        // 결과 리스트 요소 생성
+        function getListItem(index, place) {
+            const el = document.createElement('div');
+            el.className = 'place-item';
+            el.innerHTML = `
+                <h5>⭐ ${place.place_name}</h5>
+                <p>🏠 ${place.road_address_name || place.address_name}</p>
+            `;
+            return el;
+        }
+    </script>
+</body>
+</html>
